@@ -1,0 +1,66 @@
+#
+# Local services this project needs alongside Confluent Cloud:
+# * Postgres, holding the `stations` table (loaded from producers/data/cta_stations.csv)
+# * Kafka Connect, running the JDBC source connector from producers/connector.py
+#
+# Kafka and Schema Registry run on Confluent Cloud, so they are not started here.
+# Credentials come from the CONFLUENT_* environment variables in your shell.
+#
+
+services:
+  postgres:
+    image: postgres:11
+    ports:
+    - "5432:5432"
+    environment:
+      POSTGRES_USER: "cta_admin"
+      POSTGRES_PASSWORD: "chicago"
+      POSTGRES_DB: "cta"
+    volumes:
+    - ./producers/data/cta_stations.csv:/tmp/cta_stations.csv
+    # Runs only on first start, while the data directory is empty
+    - ./load_stations.sql:/docker-entrypoint-initdb.d/load_stations.sql
+
+  connect:
+    # 5.x images still bundle the JDBC connector and Postgres driver
+    image: confluentinc/cp-kafka-connect:5.2.2
+    ports:
+    - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "${CONFLUENT_BOOTSTRAP_SERVERS}"
+      CONNECT_GROUP_ID: "connect"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+      CONNECT_PLUGIN_PATH: "/usr/share/java"
+
+      # Confluent Cloud requires SASL/SSL auth for the worker and for the
+      # producer/consumer it creates for connectors
+      CONNECT_SECURITY_PROTOCOL: "SASL_SSL"
+      CONNECT_SASL_MECHANISM: "PLAIN"
+      CONNECT_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="${CONFLUENT_KAFKA_KEY}" password="${CONFLUENT_KAFKA_SECRET}";'
+      CONNECT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: "https"
+      CONNECT_PRODUCER_SECURITY_PROTOCOL: "SASL_SSL"
+      CONNECT_PRODUCER_SASL_MECHANISM: "PLAIN"
+      CONNECT_PRODUCER_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="${CONFLUENT_KAFKA_KEY}" password="${CONFLUENT_KAFKA_SECRET}";'
+      CONNECT_PRODUCER_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: "https"
+      CONNECT_CONSUMER_SECURITY_PROTOCOL: "SASL_SSL"
+      CONNECT_CONSUMER_SASL_MECHANISM: "PLAIN"
+      CONNECT_CONSUMER_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="${CONFLUENT_KAFKA_KEY}" password="${CONFLUENT_KAFKA_SECRET}";'
+      CONNECT_CONSUMER_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: "https"
+
+      # The stations connector writes plain JSON, so no Schema Registry is needed here
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+
+      # Connect's own bookkeeping topics; Confluent Cloud requires a replication factor of 3
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-config"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offset"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "3"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "3"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "3"
+    depends_on:
+    - "postgres"
